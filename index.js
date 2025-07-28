@@ -1,17 +1,18 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
 const app = express();
 const port = process.env.PORT || 3000;
-
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 // middleWares
 app.use(cors());
 app.use(express.json());
 
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.gom6gdt.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
+
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -30,6 +31,14 @@ async function run() {
     const donationsCollection = client
       .db("Assignment-12")
       .collection("Donations");
+    const favoritesCollection = client
+      .db("Assignment-12")
+      .collection("Favorites");
+    const usersCollection = client.db("Assignment-12").collection("Users");
+    const requestsCollection = client
+      .db("Assignment-12")
+      .collection("Requests");
+    const reviewsCollection = client.db("Assignment-12").collection("Reviews");
 
     app.get("/featured-donations", async (req, res) => {
       const cursor = donationsCollection.find();
@@ -42,6 +51,89 @@ async function run() {
       const result = await donationsCollection.findOne(query);
       res.send(result);
     });
+
+    app.post("/favorites", async (req, res) => {
+      const { userId, donationId } = req.body;
+
+      if (!userId || !donationId) {
+        return res
+          .status(400)
+          .send({ message: "userId and donationId are required" });
+      }
+
+      const exists = await favoritesCollection.findOne({ userId, donationId });
+      if (exists) {
+        return res.status(409).send({ message: "Favorite already exists" });
+      }
+
+      const result = await favoritesCollection.insertOne({
+        userId,
+        donationId,
+      });
+      res.status(201).send(result);
+    });
+
+    app.get("/favorites/:userId", async (req, res) => {
+      const userId = req.params.userId;
+      const favorites = await favoritesCollection.find({ userId }).toArray();
+
+      const detailedFavorites = await Promise.all(
+        favorites.map(async (fav) => {
+          const donation = await donationsCollection.findOne({
+            _id: new ObjectId(fav.donationId),
+          });
+          return {
+            ...fav,
+            ...donation,
+            donationId: fav.donationId, // keep donationId separately
+          };
+        })
+      );
+
+      res.send(detailedFavorites);
+    });
+
+    app.post("/users", async (req, res) => {
+      const user = req.body;
+      const existingUser = await usersCollection.findOne({ email: user.email });
+
+      if (existingUser) {
+        return res.status(200).send(existingUser);
+      }
+      const result = await usersCollection.insertOne(user);
+      res.status(201).send(result);
+    });
+    app.get("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      const user = await usersCollection.findOne({ email });
+      res.send(user);
+    });
+
+    app.post("/requests", async (req, res) => {
+      const request = req.body;
+      request.status = "Pending";
+      const result = await requestsCollection.insertOne(request);
+      res.send(result);
+    });
+
+    app.get("/requests/:donationId", async (req, res) => {
+      const donationId = req.params.donationId;
+      const result = await requestsCollection.find({ donationId }).toArray();
+      res.send(result);
+    });
+
+    app.patch("/requests/:id", async (req, res) => {
+      const id = req.params.id;
+      const updateDoc = {
+        $set: req.body,
+      };
+      const result = await requestsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        updateDoc
+      );
+      res.send(result);
+    });
+
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
