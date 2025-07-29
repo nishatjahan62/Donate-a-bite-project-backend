@@ -11,6 +11,25 @@ app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.gom6gdt.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
+// jwt middleware
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).send({ message: "forbidden access" });
+    }
+
+    req.decoded = decoded;
+    next();
+  });
+};
+
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 
 const client = new MongoClient(uri, {
@@ -40,6 +59,16 @@ async function run() {
       .collection("Requests");
     const reviewsCollection = client.db("Assignment-12").collection("Reviews");
 
+    // jwt
+    // JWT route
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "7d", // token expires in 7 days
+      });
+      res.send({ token });
+    });
+
     app.get("/featured-donations", async (req, res) => {
       const cursor = donationsCollection.find();
       const result = await cursor.limit(6).toArray();
@@ -52,29 +81,37 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/favorites", async (req, res) => {
-      const { userId, donationId } = req.body;
+    app.post("/favorites", verifyToken, async (req, res) => {
+      const donationId = req.body.donationId;
+      const email = req.decoded.email;
 
-      if (!userId || !donationId) {
+      if (!email || !donationId) {
         return res
           .status(400)
-          .send({ message: "userId and donationId are required" });
+          .send({ message: "email and donationId are required" });
       }
 
-      const exists = await favoritesCollection.findOne({ userId, donationId });
+      const exists = await favoritesCollection.findOne({
+        userId: email,
+        donationId,
+      });
       if (exists) {
         return res.status(409).send({ message: "Favorite already exists" });
       }
 
       const result = await favoritesCollection.insertOne({
-        userId,
+        userId: email,
         donationId,
       });
+
       res.status(201).send(result);
     });
 
     app.get("/favorites/:userId", async (req, res) => {
       const userId = req.params.userId;
+      if (req.decoded.email !== userId) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
       const favorites = await favoritesCollection.find({ userId }).toArray();
 
       const detailedFavorites = await Promise.all(
@@ -103,12 +140,18 @@ async function run() {
       const result = await usersCollection.insertOne(user);
       res.status(201).send(result);
     });
-    app.get("/users/:email", async (req, res) => {
+    app.get("/users/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
       const user = await usersCollection.findOne({ email });
       res.send(user);
     });
 
+    // Request apis
     app.post("/requests", async (req, res) => {
       const request = req.body;
       request.status = "Pending";
@@ -131,6 +174,26 @@ async function run() {
         { _id: new ObjectId(id) },
         updateDoc
       );
+      res.send(result);
+    });
+
+    // reviews api
+    app.post("/reviews", async (req, res) => {
+      const review = req.body;
+      review.createdAt = new Date();
+      const result = await reviewsCollection.insertOne(review);
+      res.send(result);
+    });
+    app.get("/reviews-by-user/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = await reviewsCollection.find({ email }).toArray();
+      res.send(result);
+    });
+    app.delete("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await reviewsCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
       res.send(result);
     });
 
