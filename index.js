@@ -56,6 +56,9 @@ async function run() {
       .db("Assignment-12")
       .collection("Requests");
     const reviewsCollection = client.db("Assignment-12").collection("Reviews");
+    const transactionsCollection = client
+      .db("Assignment-12")
+      .collection("Transactions");
 
     // jwt
 
@@ -75,21 +78,51 @@ async function run() {
 
       res.send({ token });
     });
-// User's Api
-    app.post("/users", verifyToken, async (req, res) => {
-      console.log("User POST route hit:", req.body); // 👈 Add this
+    // User's Api
+   app.post("/users", async (req, res) => {
+      try {
+        const { email, name, photoURL, role = "user" } = req.body;
 
-      const user = req.body;
-      const existingUser = await usersCollection.findOne({ email: user.email });
+        if (!email) {
+          return res.status(400).json({ error: "Email is required" });
+        }
 
-      if (existingUser) {
-        return res.status(200).send(existingUser);
+        const existingUser = await usersCollection.findOne({ email });
+
+        if (existingUser) {
+          // 🔹 Update only last_log_in if user already exists
+          await usersCollection.updateOne(
+            { email },
+            { $set: { last_log_in: new Date().toISOString() } }
+          );
+
+          return res.status(200).json({
+            message: "User already exists, last login updated",
+            userId: existingUser._id,
+          });
+        }
+
+        // 🔹 Create new user
+        const user = {
+          name,
+          email,
+          photoURL,
+          role,
+          created_at: new Date().toISOString(),
+          last_log_in: new Date().toISOString(),
+        };
+
+        const result = await usersCollection.insertOne(user);
+        res.status(201).json({
+          success: true,
+          message: "New user created",
+          userId: result.insertedId,
+        });
+      } catch (err) {
+        console.error("Error saving user:", err);
+        res.status(500).json({ error: "Internal server error" });
       }
-
-      const result = await usersCollection.insertOne(user);
-      res.status(201).send(result);
     });
-
     app.get("/users/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
@@ -100,7 +133,6 @@ async function run() {
       const user = await usersCollection.findOne({ email });
       res.send(user);
     });
-
 
     app.get("/featured-donations", async (req, res) => {
       const cursor = donationsCollection.find();
@@ -115,113 +147,198 @@ async function run() {
     });
 
     // Save to favorites
-app.post("/favorites", verifyToken, async (req, res) => {
-  const favorite = req.body; // { donationId, userEmail }
-  const result = await favoritesCollection.insertOne(favorite);
-  res.send(result);
-});
+    app.post("/favorites", verifyToken, async (req, res) => {
+      const favorite = req.body; // { donationId, userEmail }
+      const result = await favoritesCollection.insertOne(favorite);
+      res.send(result);
+    });
 
-// Get favorites for a user
-app.get("/favorites/:email", verifyToken, async (req, res) => {
-  const email = req.params.email;
-  const favorites = await favoritesCollection.find({ userEmail: email }).toArray();
+    // Get favorites for a user
+    app.get("/favorites/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const favorites = await favoritesCollection
+        .find({ userEmail: email })
+        .toArray();
 
-  const detailedFavorites = await Promise.all(
-    favorites.map(async (fav) => {
-      const donation = await donationsCollection.findOne({ _id: new ObjectId(fav.donationId) });
-      return {
-        ...fav,
-        donationTitle: donation?.title,
-        donationImage: donation?.image,
-        restaurantName: donation?.restaurantName,
-        location: donation?.location,
-        status: donation?.status,
-        quantity: donation?.quantity,
+      const detailedFavorites = await Promise.all(
+        favorites.map(async (fav) => {
+          const donation = await donationsCollection.findOne({
+            _id: new ObjectId(fav.donationId),
+          });
+          return {
+            ...fav,
+            donationTitle: donation?.title,
+            donationImage: donation?.image,
+            restaurantName: donation?.restaurantName,
+            location: donation?.location,
+            status: donation?.status,
+            quantity: donation?.quantity,
+          };
+        })
+      );
+
+      res.send(detailedFavorites);
+    });
+
+    // Create request
+    app.post("/requests", verifyToken, async (req, res) => {
+      const request = {
+        ...req.body, // donationId, donationTitle, restaurantName, charityName, charityEmail, description, pickupTime
+        status: "Pending",
+        createdAt: new Date(),
       };
-    })
-  );
+      const result = await requestsCollection.insertOne(request);
+      res.send(result);
+    });
 
-  res.send(detailedFavorites);
-});
+    // Update request status (Accept / Picked Up)
+    app.patch("/requests/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: { status },
+      };
+      const result = await requestsCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
+    app.get(
+      "/requests/by-donation/:donationId",
+      verifyToken,
+      async (req, res) => {
+        const donationId = req.params.donationId;
+        const email = req.query.email; // charity email
+        const result = await requestsCollection
+          .find({ donationId, charityEmail: email })
+          .toArray();
+        res.send(result);
+      }
+    );
 
-// Create request
-app.post("/requests", verifyToken, async (req, res) => {
-  const request = {
-    ...req.body, // donationId, donationTitle, restaurantName, charityName, charityEmail, description, pickupTime
-    status: "Pending",
-    createdAt: new Date(),
-  };
-  const result = await requestsCollection.insertOne(request);
-  res.send(result);
-});
+    // Add review
+    app.post("/reviews", verifyToken, async (req, res) => {
+      const review = {
+        ...req.body, // donationId, reviewerName, description, rating
+        createdAt: new Date(),
+      };
+      const result = await reviewsCollection.insertOne(review);
+      res.send(result);
+    });
 
-// Update request status (Accept / Picked Up)
-app.patch("/requests/:id", verifyToken, async (req, res) => {
-  const id = req.params.id;
-  const { status } = req.body;
-  const filter = { _id: new ObjectId(id) };
-  const updateDoc = {
-    $set: { status },
-  };
-  const result = await requestsCollection.updateOne(filter, updateDoc);
-  res.send(result);
-});
-app.get("/requests/by-donation/:donationId", verifyToken, async (req, res) => {
-  const donationId = req.params.donationId;
-  const email = req.query.email; // charity email
-  const result = await requestsCollection
-    .find({ donationId, charityEmail: email })
-    .toArray();
-  res.send(result);
-});
+    // Get reviews for a donation
+    app.get("/reviews/:donationId", async (req, res) => {
+      const donationId = req.params.donationId;
+      const result = await reviewsCollection.find({ donationId }).toArray();
+      res.send(result);
+    });
 
-// Add review
-app.post("/reviews", verifyToken, async (req, res) => {
-  const review = {
-    ...req.body, // donationId, reviewerName, description, rating
-    createdAt: new Date(),
-  };
-  const result = await reviewsCollection.insertOne(review);
-  res.send(result);
-});
+    app.post("/charity-request", verifyToken, async (req, res) => {
+      const {
+        email,
+        organizationName,
+        missionStatement,
+        transactionId,
+        amount,
+      } = req.body;
 
-// Get reviews for a donation
-app.get("/reviews/:donationId", async (req, res) => {
-  const donationId = req.params.donationId;
-  const result = await reviewsCollection.find({ donationId }).toArray();
-  res.send(result);
-});
+      const existingRequest = await requestsCollection.findOne({
+        email,
+        status: { $in: ["Pending", "Approved"] },
+        purpose: "Charity Role Request",
+      });
 
-app.post("/charity-request", verifyToken, async (req, res) => {
-  const { email, organizationName, missionStatement, transactionId, amount } = req.body;
+      if (existingRequest) {
+        return res
+          .status(400)
+          .send({ message: "You already have a pending or approved request." });
+      }
 
-  const existingRequest = await requestsCollection.findOne({
-    email,
-    status: { $in: ["Pending", "Approved"] },
-    purpose: "Charity Role Request",
-  });
+      const result = await requestsCollection.insertOne({
+        email,
+        organizationName,
+        missionStatement,
+        transactionId,
+        amount,
+        status: "Pending",
+        purpose: "Charity Role Request",
+        createdAt: new Date(),
+      });
 
-  if (existingRequest) {
-    return res.status(400).send({ message: "You already have a pending or approved request." });
-  }
+      res.send(result);
+    });
 
-  const result = await requestsCollection.insertOne({
-    email,
-    organizationName,
-    missionStatement,
-    transactionId,
-    amount,
-    status: "Pending",
-    purpose: "Charity Role Request",
-    createdAt: new Date(),
-  });
+    // Payment related apis::
 
-  res.send(result);
-});
+    // Create Payment Intent
+    app.post("/create-payment-intent", verifyToken, async (req, res) => {
+      const { amount } = req.body;
 
+      if (!amount || amount <= 0) {
+        return res.status(400).send({ message: "Invalid amount" });
+      }
 
- 
-   
+      try {
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount * 100, // Stripe works in cents
+          currency: "usd",
+          payment_method_types: ["card"],
+        });
+
+        res.send({ clientSecret: paymentIntent.client_secret });
+      } catch (err) {
+        console.error("Stripe error:", err);
+        res.status(500).send({ error: err.message });
+      }
+    });
+
+    // Save Transaction (after successful payment)
+    app.post("/transactions", verifyToken, async (req, res) => {
+      const { email, amount, transactionId, purpose } = req.body;
+
+      if (!email || !transactionId) {
+        return res.status(400).send({ message: "Missing required fields" });
+      }
+
+      const transaction = {
+        email,
+        amount,
+        transactionId,
+        purpose: purpose || "General",
+        status: "succeeded",
+        createdAt: new Date(),
+      };
+
+      const result = await transactionsCollection.insertOne(transaction);
+      res.send(result);
+    });
+
+    // Get user's transactions (history)
+    app.get("/transactions/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      const transactions = await transactionsCollection
+        .find({ email })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send(transactions);
+    });
+
+    // Admin: Get all transactions
+    app.get("/transactions", verifyToken, async (req, res) => {
+      // Optional: role check if (req.decoded.role !== "admin") return res.status(403).send({ message: "forbidden" });
+
+      const transactions = await transactionsCollection
+        .find()
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send(transactions);
+    });
 
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
