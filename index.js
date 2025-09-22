@@ -73,13 +73,13 @@ async function run() {
       const token = jwt.sign(
         { email: userEmail, role: user.role || "user" },
         process.env.ACCESS_TOKEN_SECRET,
-        { expiresIn: "7d" }
+        { expiresIn: "30d" }
       );
 
       res.send({ token });
     });
     // User's Api
-   app.post("/users", async (req, res) => {
+    app.post("/users", async (req, res) => {
       try {
         const { email, name, photoURL, role = "user" } = req.body;
 
@@ -123,6 +123,63 @@ async function run() {
         res.status(500).json({ error: "Internal server error" });
       }
     });
+
+    app.get("/users", verifyToken, async (req, res) => {
+      const { search } = req.query;
+      const query = search
+        ? {
+            $or: [
+              { name: { $regex: search, $options: "i" } },
+              { email: { $regex: search, $options: "i" } },
+            ],
+          }
+        : {};
+
+      const users = await usersCollection.find(query).toArray();
+      res.send(users);
+    });
+
+    // Make a user admin
+    app.patch("/users/:id/make-admin", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role: "admin" } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        res.json({ success: true, message: "User is now an admin" });
+      } catch (err) {
+        console.error("Error making admin:", err);
+        res.status(500).json({ error: "Failed to make admin" });
+      }
+    });
+    // Remove admin (set back to user)
+    app.patch("/users/:id/remove-admin", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role: "user" } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        res.json({ success: true, message: "Admin removed, set back to user" });
+      } catch (err) {
+        console.error("Error removing admin:", err);
+        res.status(500).json({ error: "Failed to remove admin" });
+      }
+    });
+
     app.get("/users/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
