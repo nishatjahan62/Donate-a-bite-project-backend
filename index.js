@@ -61,30 +61,28 @@ async function run() {
       });
     };
     //  Admin Middleware
-    const verifyAdmin = async (req, res, next) => {
-      try {
-        const email = req.user?.email; 
-        if (!email) {
-          return res
-            .status(401)
-            .json({ error: "Unauthorized: No email found" });
-        }
+  const verifyAdmin = async (req, res, next) => {
+  try {
+    const email = req.decoded?.email; // <- change from req.user?.email
+    if (!email) {
+      return res.status(401).json({ error: "Unauthorized: No email found" });
+    }
 
-        const user = await usersCollection.findOne({ email });
-        if (!user) {
-          return res.status(404).json({ error: "User not found" });
-        }
+    const user = await usersCollection.findOne({ email });
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-        if (user.role !== "admin") {
-          return res.status(403).json({ error: "Forbidden: Admins only" });
-        }
-        req.userRole = user.role;
-        next();
-      } catch (err) {
-        console.error("Admin verification failed:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    };
+    if (user.role !== "admin") {
+      return res.status(403).json({ error: "Forbidden: Admins only" });
+    }
+
+    req.userRole = user.role; // optional
+    next();
+  } catch (err) {
+    console.error("Admin verification failed:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 
     // jwt
 
@@ -149,61 +147,168 @@ async function run() {
       }
     });
 
-    app.get("/users", verifyToken, async (req, res) => {
-      const { search } = req.query;
-      const query = search
-        ? {
-            $or: [
-              { name: { $regex: search, $options: "i" } },
-              { email: { $regex: search, $options: "i" } },
-            ],
-          }
-        : {};
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+  const { search } = req.query;
+  const query = search
+    ? {
+        $or: [
+          { name: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+        ],
+      }
+    : {};
 
-      const users = await usersCollection.find(query).toArray();
-      res.send(users);
-    });
+  const users = await usersCollection.find(query).toArray();
+  res.send(users);
+});
 
     // Make a user admin
-    app.patch("/users/:id/make-admin", verifyToken, async (req, res) => {
-      try {
-        const { id } = req.params;
+    app.patch(
+      "/users/:id/make-admin",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
 
-        const result = await usersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role: "admin" } }
-        );
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "admin" } }
+          );
 
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ error: "User not found" });
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ error: "User not found" });
+          }
+
+          res.json({ success: true, message: "User is now an admin" });
+        } catch (err) {
+          console.error("Error making admin:", err);
+          res.status(500).json({ error: "Failed to make admin" });
         }
-
-        res.json({ success: true, message: "User is now an admin" });
-      } catch (err) {
-        console.error("Error making admin:", err);
-        res.status(500).json({ error: "Failed to make admin" });
       }
-    });
+    );
     // Remove admin (set back to user)
-    app.patch("/users/:id/remove-admin", verifyToken, async (req, res) => {
-      try {
-        const { id } = req.params;
+    app.patch(
+      "/users/:id/remove-admin",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
 
-        const result = await usersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role: "user" } }
-        );
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "user" } }
+          );
 
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ error: "User not found" });
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ error: "User not found" });
+          }
+
+          res.json({
+            success: true,
+            message: "Admin removed, set back to user",
+          });
+        } catch (err) {
+          console.error("Error removing admin:", err);
+          res.status(500).json({ error: "Failed to remove admin" });
         }
-
-        res.json({ success: true, message: "Admin removed, set back to user" });
-      } catch (err) {
-        console.error("Error removing admin:", err);
-        res.status(500).json({ error: "Failed to remove admin" });
       }
-    });
+    );
+
+    // Make Charity
+    app.patch(
+      "/users/:id/make-charity",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "charity" } }
+          );
+          if (result.matchedCount === 0)
+            return res.status(404).json({ error: "User not found" });
+          res.json({ success: true, message: "User role set to charity" });
+        } catch (err) {
+          console.error("Error making charity:", err);
+          res.status(500).json({ error: "Failed to set charity role" });
+        }
+      }
+    );
+
+    // Remove Charity (set back to user)
+    app.patch(
+      "/users/:id/remove-charity",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "user" } }
+          );
+          if (result.matchedCount === 0)
+            return res.status(404).json({ error: "User not found" });
+          res.json({
+            success: true,
+            message: "Charity role removed, set back to user",
+          });
+        } catch (err) {
+          console.error("Error removing charity:", err);
+          res.status(500).json({ error: "Failed to remove charity role" });
+        }
+      }
+    );
+
+    // Make Restaurant
+    app.patch(
+      "/users/:id/make-restaurant",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "restaurant" } }
+          );
+          if (result.matchedCount === 0)
+            return res.status(404).json({ error: "User not found" });
+          res.json({ success: true, message: "User role set to restaurant" });
+        } catch (err) {
+          console.error("Error making restaurant:", err);
+          res.status(500).json({ error: "Failed to set restaurant role" });
+        }
+      }
+    );
+
+    // Remove Restaurant (set back to user)
+    app.patch(
+      "/users/:id/remove-restaurant",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "user" } }
+          );
+          if (result.matchedCount === 0)
+            return res.status(404).json({ error: "User not found" });
+          res.json({
+            success: true,
+            message: "Restaurant role removed, set back to user",
+          });
+        } catch (err) {
+          console.error("Error removing restaurant:", err);
+          res.status(500).json({ error: "Failed to remove restaurant role" });
+        }
+      }
+    );
 
     app.get("/users/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
@@ -244,7 +349,7 @@ async function run() {
 
     // Save to favorites
     app.post("/favorites", verifyToken, async (req, res) => {
-      const favorite = req.body; 
+      const favorite = req.body;
       const result = await favoritesCollection.insertOne(favorite);
       res.send(result);
     });
@@ -279,7 +384,7 @@ async function run() {
     // Create request
     app.post("/requests", verifyToken, async (req, res) => {
       const request = {
-        ...req.body, 
+        ...req.body,
         status: "Pending",
         createdAt: new Date(),
       };
@@ -314,7 +419,7 @@ async function run() {
     // Add review
     app.post("/reviews", verifyToken, async (req, res) => {
       const review = {
-        ...req.body, 
+        ...req.body,
         createdAt: new Date(),
       };
       const result = await reviewsCollection.insertOne(review);
