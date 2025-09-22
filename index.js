@@ -12,22 +12,6 @@ app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.gom6gdt.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
-// jwt middleware
-const verifyToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).send("Unauthorized access");
-  }
-
-  const token = authHeader.split(" ")[1];
-
-  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-    if (err) return res.status(403).send({ message: "Forbidden access" });
-    req.decoded = decoded;
-    next();
-  });
-};
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 
 const client = new MongoClient(uri, {
@@ -60,6 +44,48 @@ async function run() {
       .db("Assignment-12")
       .collection("Transactions");
 
+    // jwt middleware
+    const verifyToken = (req, res, next) => {
+      const authHeader = req.headers.authorization;
+
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).send("Unauthorized access");
+      }
+
+      const token = authHeader.split(" ")[1];
+
+      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) return res.status(403).send({ message: "Forbidden access" });
+        req.decoded = decoded;
+        next();
+      });
+    };
+    //  Admin Middleware
+    const verifyAdmin = async (req, res, next) => {
+      try {
+        const email = req.user?.email; 
+        if (!email) {
+          return res
+            .status(401)
+            .json({ error: "Unauthorized: No email found" });
+        }
+
+        const user = await usersCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        if (user.role !== "admin") {
+          return res.status(403).json({ error: "Forbidden: Admins only" });
+        }
+        req.userRole = user.role;
+        next();
+      } catch (err) {
+        console.error("Admin verification failed:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    };
+
     // jwt
 
     app.post("/jwt", async (req, res) => {
@@ -90,7 +116,6 @@ async function run() {
         const existingUser = await usersCollection.findOne({ email });
 
         if (existingUser) {
-          // 🔹 Update only last_log_in if user already exists
           await usersCollection.updateOne(
             { email },
             { $set: { last_log_in: new Date().toISOString() } }
@@ -102,7 +127,7 @@ async function run() {
           });
         }
 
-        // 🔹 Create new user
+        // Create new user
         const user = {
           name,
           email,
@@ -191,6 +216,20 @@ async function run() {
       res.send(user);
     });
 
+    app.get("/users/role/:email", verifyToken, async (req, res) => {
+      try {
+        const { email } = req.params;
+        const user = await usersCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).json({ role: "user" }); // default to user
+        }
+        res.json({ role: user.role || "user" });
+      } catch (err) {
+        console.error("Error fetching role:", err);
+        res.status(500).json({ error: "Failed to fetch role" });
+      }
+    });
+
     app.get("/featured-donations", async (req, res) => {
       const cursor = donationsCollection.find();
       const result = await cursor.limit(6).toArray();
@@ -205,7 +244,7 @@ async function run() {
 
     // Save to favorites
     app.post("/favorites", verifyToken, async (req, res) => {
-      const favorite = req.body; // { donationId, userEmail }
+      const favorite = req.body; 
       const result = await favoritesCollection.insertOne(favorite);
       res.send(result);
     });
@@ -240,7 +279,7 @@ async function run() {
     // Create request
     app.post("/requests", verifyToken, async (req, res) => {
       const request = {
-        ...req.body, // donationId, donationTitle, restaurantName, charityName, charityEmail, description, pickupTime
+        ...req.body, 
         status: "Pending",
         createdAt: new Date(),
       };
@@ -275,7 +314,7 @@ async function run() {
     // Add review
     app.post("/reviews", verifyToken, async (req, res) => {
       const review = {
-        ...req.body, // donationId, reviewerName, description, rating
+        ...req.body, 
         createdAt: new Date(),
       };
       const result = await reviewsCollection.insertOne(review);
@@ -336,7 +375,7 @@ async function run() {
 
       try {
         const paymentIntent = await stripe.paymentIntents.create({
-          amount: amount * 100, // Stripe works in cents
+          amount: amount * 100,
           currency: "usd",
           payment_method_types: ["card"],
         });
@@ -387,8 +426,6 @@ async function run() {
 
     // Admin: Get all transactions
     app.get("/transactions", verifyToken, async (req, res) => {
-      // Optional: role check if (req.decoded.role !== "admin") return res.status(403).send({ message: "forbidden" });
-
       const transactions = await transactionsCollection
         .find()
         .sort({ createdAt: -1 })
