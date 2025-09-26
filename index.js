@@ -61,28 +61,29 @@ async function run() {
       });
     };
     //  Admin Middleware
-  const verifyAdmin = async (req, res, next) => {
-  try {
-    const email = req.decoded?.email; // <- change from req.user?.email
-    if (!email) {
-      return res.status(401).json({ error: "Unauthorized: No email found" });
-    }
+    const verifyAdmin = async (req, res, next) => {
+      try {
+        const email = req.decoded?.email; // <- change from req.user?.email
+        if (!email) {
+          return res
+            .status(401)
+            .json({ error: "Unauthorized: No email found" });
+        }
 
-    const user = await usersCollection.findOne({ email });
-    if (!user) return res.status(404).json({ error: "User not found" });
+        const user = await usersCollection.findOne({ email });
+        if (!user) return res.status(404).json({ error: "User not found" });
 
-    if (user.role !== "admin") {
-      return res.status(403).json({ error: "Forbidden: Admins only" });
-    }
+        if (user.role !== "admin") {
+          return res.status(403).json({ error: "Forbidden: Admins only" });
+        }
 
-    req.userRole = user.role; // optional
-    next();
-  } catch (err) {
-    console.error("Admin verification failed:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-};
-
+        req.userRole = user.role; // optional
+        next();
+      } catch (err) {
+        console.error("Admin verification failed:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    };
 
     // jwt
 
@@ -148,19 +149,19 @@ async function run() {
     });
 
     app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
-  const { search } = req.query;
-  const query = search
-    ? {
-        $or: [
-          { name: { $regex: search, $options: "i" } },
-          { email: { $regex: search, $options: "i" } },
-        ],
-      }
-    : {};
+      const { search } = req.query;
+      const query = search
+        ? {
+            $or: [
+              { name: { $regex: search, $options: "i" } },
+              { email: { $regex: search, $options: "i" } },
+            ],
+          }
+        : {};
 
-  const users = await usersCollection.find(query).toArray();
-  res.send(users);
-});
+      const users = await usersCollection.find(query).toArray();
+      res.send(users);
+    });
 
     // Make a user admin
     app.patch(
@@ -416,6 +417,28 @@ async function run() {
       }
     );
 
+    app.delete("/requests/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const request = await requestsCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!request) {
+        return res.status(404).send({ message: "Request not found" });
+      }
+
+      if (request.status !== "Pending") {
+        return res
+          .status(400)
+          .send({ message: "Only Pending requests can be cancelled" });
+      }
+
+      const result = await requestsCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+      res.send(result);
+    });
+
     // Add review
     app.post("/reviews", verifyToken, async (req, res) => {
       const review = {
@@ -468,6 +491,136 @@ async function run() {
       res.send(result);
     });
 
+    // charity Routes::
+
+    app.get("/requests/charity/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      const requests = await requestsCollection
+        .find({ charityEmail: email })
+        .toArray();
+
+      // enrich with donation details
+      const detailedRequests = await Promise.all(
+        requests.map(async (req) => {
+          const donation = await donationsCollection.findOne({
+            _id: new ObjectId(req.donationId),
+          });
+          return {
+            ...req,
+            donationTitle: donation?.title,
+            restaurantName: donation.restaurant?.name,
+            foodType: donation?.foodType,
+            quantity: donation?.quantity,
+          };
+        })
+      );
+
+      res.send(detailedRequests);
+    });
+    // Get all pickups for a charity (Accepted / Assigned)
+    app.get("/charity/my-pickups/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      const requests = await requestsCollection
+        .find({
+          charityEmail: email,
+          status: { $in: ["Accepted", "Assigned"] },
+        })
+        .toArray();
+
+      const detailed = await Promise.all(
+        requests.map(async (reqDoc) => {
+          const donation = await donationsCollection.findOne({
+            _id: new ObjectId(reqDoc.donationId),
+          });
+
+          return {
+            ...reqDoc,
+            donationTitle: donation?.title,
+            restaurantName: donation?.restaurant?.name,
+            restaurantLocation: donation?.restaurant?.location,
+            foodType: donation?.foodType,
+            quantity: donation?.quantity,
+            pickupTime: donation?.pickupTime,
+          };
+        })
+      );
+
+      res.send(detailed);
+    });
+
+    app.patch("/charity/confirm-pickup/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: { status: "Picked Up", pickupDate: new Date() },
+      };
+
+      const result = await requestsCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
+    app.get("/charity/received/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      const requests = await requestsCollection
+        .find({ charityEmail: email, status: "Picked Up" })
+        .toArray();
+
+      const detailed = await Promise.all(
+        requests.map(async (reqDoc) => {
+          const donation = await donationsCollection.findOne({
+            _id: new ObjectId(reqDoc.donationId),
+          });
+          return {
+            ...reqDoc,
+            donationTitle: donation?.title,
+            restaurantName: donation?.restaurant?.name,
+            restaurantLocation: donation?.restaurant?.location,
+            foodType: donation?.foodType,
+            quantity: donation?.quantity,
+            pickupTime: donation?.pickupTime,
+          };
+        })
+      );
+
+      res.send(detailed);
+    });
+    app.post("/charity/review/:requestId", verifyToken, async (req, res) => {
+      const { rating, comment } = req.body;
+      const requestId = req.params.requestId;
+
+      const request = await requestsCollection.findOne({
+        _id: new ObjectId(requestId),
+      });
+      if (!request)
+        return res.status(404).send({ message: "Request not found" });
+
+      const review = {
+        donationId: request.donationId,
+        charityEmail: request.charityEmail,
+        rating,
+        comment,
+        createdAt: new Date(),
+      };
+
+      const result = await reviewsCollection.insertOne(review);
+      res.send(result);
+    });
+
     // Payment related apis::
 
     // Create Payment Intent
@@ -513,7 +666,7 @@ async function run() {
       res.send(result);
     });
 
-    // Get user's transactions (history)
+    // Get user's and charity transactions (history)
     app.get("/transactions/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
@@ -521,12 +674,32 @@ async function run() {
         return res.status(403).send({ message: "Forbidden access" });
       }
 
-      const transactions = await transactionsCollection
-        .find({ email })
-        .sort({ createdAt: -1 })
-        .toArray();
+      try {
+        // get all transactions
+        const transactions = await transactionsCollection
+          .find({ email, purpose: "Charity Role Request" })
+          .sort({ createdAt: -1 })
+          .toArray();
 
-      res.send(transactions);
+        // merge with requests
+        const enriched = await Promise.all(
+          transactions.map(async (tx) => {
+            const request = await requestsCollection.findOne({
+              transactionId: tx.transactionId,
+            });
+
+            return {
+              ...tx,
+              requestStatus: request?.status || "Pending", // ✅ add request status here
+            };
+          })
+        );
+
+        res.send(enriched);
+      } catch (error) {
+        console.error("Error fetching transactions:", error);
+        res.status(500).send({ message: "Server error" });
+      }
     });
 
     // Admin: Get all transactions
@@ -537,6 +710,177 @@ async function run() {
         .toArray();
 
       res.send(transactions);
+    });
+
+    // Restaurant Routes::
+    // Add donation (restaurant only)
+    app.post("/donations", verifyToken, async (req, res) => {
+      try {
+        const {
+          title,
+          foodType,
+          quantity,
+          pickupTime,
+          restaurantName,
+          restaurantEmail,
+          location,
+          image,
+        } = req.body;
+
+        // Validate required fields
+        if (
+          !title ||
+          !foodType ||
+          !quantity ||
+          !pickupTime ||
+          !restaurantName ||
+          !restaurantEmail ||
+          !location
+        ) {
+          return res
+            .status(400)
+            .json({ message: "All required fields must be filled" });
+        }
+
+        // Build new donation object with nested restaurant
+        const newDonation = {
+          title,
+          foodType,
+          quantity,
+          pickupTime,
+          restaurant: {
+            name: restaurantName,
+            email: restaurantEmail,
+            location: location,
+          },
+          image,
+          status: "Pending", // default
+          createdAt: new Date(),
+        };
+
+        const result = await donationsCollection.insertOne(newDonation);
+        res.status(201).send(result);
+      } catch (error) {
+        console.error("Error adding donation:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
+    // My donations
+    // GET /donations/restaurant/:email
+    app.get("/donations/restaurant/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      const donations = await donationsCollection
+        .find({ restaurantEmail: email })
+        .toArray();
+
+      res.send(donations);
+    });
+    // PATCH /donations/:id
+    app.patch("/donations/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const updateData = req.body;
+
+      const donation = await donationsCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      if (!donation)
+        return res.status(404).send({ message: "Donation not found" });
+      if (donation.status === "Rejected")
+        return res
+          .status(400)
+          .send({ message: "Cannot update a rejected donation" });
+
+      const result = await donationsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateData }
+      );
+
+      res.send(result);
+    });
+
+    // Get all charity requests for restaurants
+    // Get all donation requests for restaurant dashboard
+    app.get("/requests/restaurant/all", verifyToken, async (req, res) => {
+      try {
+        const requests = await requestsCollection
+          .find({ purpose: { $ne: "Charity Role Request" } })
+          .toArray();
+
+        // enrich with donation info if needed
+        const detailedRequests = await Promise.all(
+          requests.map(async (reqDoc) => {
+            const donation = await donationsCollection.findOne({
+              _id: new ObjectId(reqDoc.donationId),
+            });
+            return {
+              ...reqDoc,
+              donationTitle: reqDoc.donationTitle,
+              foodType: donation?.foodType || "N/A",
+              charityName: reqDoc.charityName,
+              charityEmail: reqDoc.charityEmail,
+              description: reqDoc.description,
+              pickupTime: reqDoc.pickupTime,
+              status: reqDoc.status,
+            };
+          })
+        );
+
+        res.send(detailedRequests);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch donation requests" });
+      }
+    });
+
+    // Accept a request
+    app.patch("/requests/accept/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        // 1️⃣ Accept this request
+        await requestsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "Accepted" } }
+        );
+
+        // 2️⃣ Reject other requests for the same donation
+        const request = await requestsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        await requestsCollection.updateMany(
+          { donationId: request.donationId, _id: { $ne: new ObjectId(id) } },
+          { $set: { status: "Rejected" } }
+        );
+
+        res.send({ message: "Request accepted, others rejected" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to accept request" });
+      }
+    });
+
+    // Reject a request
+    app.patch("/requests/reject/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        await requestsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "Rejected" } }
+        );
+
+        res.send({ message: "Request rejected" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to reject request" });
+      }
     });
 
     console.log(
