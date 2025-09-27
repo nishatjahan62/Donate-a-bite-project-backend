@@ -493,6 +493,19 @@ async function run() {
 
     // charity Routes::
 
+    app.get("/charity-request/check", verifyToken, async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ message: "Email is required" });
+
+      const existingRequest = await requestsCollection.findOne({
+        email,
+        status: { $in: ["Pending", "Approved"] },
+        purpose: "Charity Role Request",
+      });
+
+      res.send({ exists: !!existingRequest });
+    });
+
     app.get("/requests/charity/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
@@ -713,6 +726,7 @@ async function run() {
     });
 
     // Restaurant Routes::
+
     // Add donation (restaurant only)
     app.post("/donations", verifyToken, async (req, res) => {
       try {
@@ -804,7 +818,6 @@ async function run() {
       res.send(result);
     });
 
-    // Get all charity requests for restaurants
     // Get all donation requests for restaurant dashboard
     app.get("/requests/restaurant/all", verifyToken, async (req, res) => {
       try {
@@ -812,7 +825,6 @@ async function run() {
           .find({ purpose: { $ne: "Charity Role Request" } })
           .toArray();
 
-        // enrich with donation info if needed
         const detailedRequests = await Promise.all(
           requests.map(async (reqDoc) => {
             const donation = await donationsCollection.findOne({
@@ -882,6 +894,64 @@ async function run() {
         res.status(500).send({ message: "Failed to reject request" });
       }
     });
+
+    // Admin Routes=>
+
+// Only restaurant-added donations 
+app.get("/donations", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const donations = await donationsCollection
+      .find({ restaurantName: { $exists: true } }) // 👈 only real restaurant-added
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send(donations);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to fetch donations" });
+  }
+});
+
+
+    // Verify a donation
+    app.patch(
+      "/donations/:id/verify",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        try {
+          const result = await donationsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: "Verified" } }
+          );
+          res.send(result);
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Failed to verify donation" });
+        }
+      }
+    );
+
+    // Reject a donation
+    app.patch(
+      "/donations/:id/reject",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        try {
+          const result = await donationsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: "Rejected" } }
+          );
+          res.send(result);
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Failed to reject donation" });
+        }
+      }
+    );
 
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
