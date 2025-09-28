@@ -6,6 +6,7 @@ const app = express();
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
 // middleWares
 app.use(cors());
 app.use(express.json());
@@ -103,7 +104,9 @@ async function run() {
 
       res.send({ token });
     });
-    // User's Api
+
+    // User's Api::
+
     app.post("/users", async (req, res) => {
       try {
         const { email, name, photoURL, role = "user" } = req.body;
@@ -163,6 +166,31 @@ async function run() {
       res.send(users);
     });
 
+     app.get("/users/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
+      const user = await usersCollection.findOne({ email });
+      res.send(user);
+    });
+
+    app.get("/users/role/:email", verifyToken, async (req, res) => {
+      try {
+        const { email } = req.params;
+        const user = await usersCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).json({ role: "user" }); // default to user
+        }
+        res.json({ role: user.role || "user" });
+      } catch (err) {
+        console.error("Error fetching role:", err);
+        res.status(500).json({ error: "Failed to fetch role" });
+      }
+    });
+
     // Delete user
     app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
       try {
@@ -180,6 +208,8 @@ async function run() {
         res.status(500).json({ message: "Failed to delete user" });
       }
     });
+
+    // Role changing apis::
 
     // Make a user admin
     app.patch(
@@ -206,7 +236,7 @@ async function run() {
         }
       }
     );
-    // Remove admin (set back to user)
+    // Remove admin 
     app.patch(
       "/users/:id/remove-admin",
       verifyToken,
@@ -275,7 +305,7 @@ async function run() {
       }
     );
 
-    // Remove Charity (set back to user)
+    // Remove Charity 
     app.patch(
       "/users/:id/remove-charity",
       verifyToken,
@@ -332,7 +362,7 @@ async function run() {
       }
     );
 
-    // Remove Restaurant (set back to user)
+    // Remove Restaurant 
     app.patch(
       "/users/:id/remove-restaurant",
       verifyToken,
@@ -357,31 +387,7 @@ async function run() {
       }
     );
 
-    app.get("/users/:email", verifyToken, async (req, res) => {
-      const email = req.params.email;
-
-      if (req.decoded.email !== email) {
-        return res.status(403).send({ message: "forbidden access" });
-      }
-
-      const user = await usersCollection.findOne({ email });
-      res.send(user);
-    });
-
-    app.get("/users/role/:email", verifyToken, async (req, res) => {
-      try {
-        const { email } = req.params;
-        const user = await usersCollection.findOne({ email });
-        if (!user) {
-          return res.status(404).json({ role: "user" }); // default to user
-        }
-        res.json({ role: user.role || "user" });
-      } catch (err) {
-        console.error("Error fetching role:", err);
-        res.status(500).json({ error: "Failed to fetch role" });
-      }
-    });
-
+// Featured section apis::
     app.get("/featured-donations", async (req, res) => {
       const cursor = donationsCollection.find();
       const result = await cursor.limit(6).toArray();
@@ -439,7 +445,7 @@ async function run() {
       res.send(result);
     });
 
-    // Update request status (Accept / Picked Up)
+    // Update request status 
     app.patch("/requests/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const { status } = req.body;
@@ -489,7 +495,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       verifyToken,
       async (req, res) => {
         const donationId = req.params.donationId;
-        const email = req.query.email; // charity email
+        const email = req.query.email; 
         const result = await requestsCollection
           .find({ donationId, charityEmail: email })
           .toArray();
@@ -571,7 +577,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       res.send(result);
     });
 
-    // charity Routes::
+    // charity apis::
 
     app.get("/charity-request/check", verifyToken, async (req, res) => {
       const email = req.query.email;
@@ -597,7 +603,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
         .find({ charityEmail: email })
         .toArray();
 
-      // enrich with donation details
       const detailedRequests = await Promise.all(
         requests.map(async (req) => {
           const donation = await donationsCollection.findOne({
@@ -615,7 +620,8 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
 
       res.send(detailedRequests);
     });
-    // Get all pickups for a charity (Accepted / Assigned)
+
+    // Get all pickups for a charity 
     app.get("/charity/my-pickups/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
@@ -714,6 +720,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       res.send(result);
     });
 
+
     // Payment related apis::
 
     // Create Payment Intent
@@ -783,7 +790,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
 
             return {
               ...tx,
-              requestStatus: request?.status || "Pending", // ✅ add request status here
+              requestStatus: request?.status || "Pending",
             };
           })
         );
@@ -836,7 +843,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
             .json({ message: "All required fields must be filled" });
         }
 
-        // Build new donation object with nested restaurant
+      
         const newDonation = {
           title,
           foodType,
@@ -848,7 +855,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
             location: location,
           },
           image,
-          status: "Pending", // default
+          status: "Pending", 
           createdAt: new Date(),
         };
 
@@ -861,7 +868,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     });
 
     // My donations
-    // GET /donations/restaurant/:email
     app.get("/donations/restaurant/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
@@ -876,7 +882,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       res.send(donations);
     });
 
-    // PATCH /donations/:id
     app.patch("/donations/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const updateData = req.body;
@@ -912,7 +917,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
           _id: new ObjectId(reqDoc.donationId),
         });
 
-        // <-- Add it here
         const user = await usersCollection.findOne({ email: reqDoc.charityEmail });
 
         return {
@@ -921,7 +925,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
           foodType: donation?.foodType || "N/A",
           charityName: reqDoc.charityName,
           charityEmail: reqDoc.charityEmail,
-          charityImage: user?.photoURL || null, // <-- This line
+          charityImage: user?.photoURL || null, 
           description: reqDoc.description,
           pickupTime: reqDoc.pickupTime,
           status: reqDoc.status,
@@ -942,13 +946,13 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
 
       try {
-        // 1️⃣ Accept this request
+        // 1️ Accept this request
         await requestsCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: { status: "Accepted" } }
         );
 
-        // 2️⃣ Reject other requests for the same donation
+        // Reject other requests for the same donation
         const request = await requestsCollection.findOne({
           _id: new ObjectId(id),
         });
@@ -985,7 +989,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     // Admin Routes=>
 
     // manage donations
-    //  restaurant-added donations
     app.get("/donations", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const donations = await donationsCollection
@@ -1041,7 +1044,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     );
 
     // manage Role Requests
-    // ✅ Admin: Get all charity role requests
     app.get("/charity-requests", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const requests = await requestsCollection
@@ -1070,7 +1072,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       }
     });
 
-    // ✅ Admin: Approve charity role request
+    // Approve charity role request
     app.patch(
       "/charity-requests/:id/approve",
       verifyToken,
@@ -1079,20 +1081,20 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
         const { id } = req.params;
 
         try {
-          // find request
+       
           const request = await requestsCollection.findOne({
             _id: new ObjectId(id),
           });
           if (!request)
             return res.status(404).send({ message: "Request not found" });
 
-          // update user role
+       
           await usersCollection.updateOne(
             { email: request.email },
             { $set: { role: "charity" } }
           );
 
-          // update request status
+      
           await requestsCollection.updateOne(
             { _id: new ObjectId(id) },
             { $set: { status: "Approved" } }
@@ -1106,7 +1108,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       }
     );
 
-    // ✅ Admin: Reject charity role request
+    // Reject charity role request
     app.patch(
       "/charity-requests/:id/reject",
       verifyToken,
@@ -1129,19 +1131,14 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     );
 
     // Manage Requests::
-
-    // =====================
-    // Admin: Get all donation requests
-    // =====================
     app.get("/admin/requests", verifyToken, verifyAdmin, async (req, res) => {
       try {
-        // exclude Charity Role Requests
+    
         const requests = await requestsCollection
           .find({ purpose: { $ne: "Charity Role Request" } })
           .sort({ createdAt: -1 })
           .toArray();
 
-        // enrich with donation and charity details
         const detailedRequests = await Promise.all(
           requests.map(async (reqDoc) => {
             const donation = await donationsCollection.findOne({
@@ -1164,9 +1161,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       }
     });
 
-    // =====================
-    // Admin: Delete a donation request
-    // =====================
+  // Delete a donation request
     app.delete(
       "/admin/requests/:id",
       verifyToken,
@@ -1191,7 +1186,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     );
 
     // Featured Donations
-    // GET all verified donations for admin "Feature Donations" page
+   
     app.get(
       "/admin/feature-donations",
       verifyToken,
@@ -1199,7 +1194,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       async (req, res) => {
         try {
           const donations = await donationsCollection
-            .find({ status: "Verified" }) // only verified donations
+            .find({ status: "Verified" }) 
             .sort({ createdAt: -1 })
             .toArray();
           res.send(donations);
@@ -1213,14 +1208,13 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     );
 
     // All donations
-
     app.get(
       "/all-donations",
       verifyToken,
       async (req, res) => {
         try {
           const donations = await donationsCollection
-            .find({ status: "Verified" }) // only verified donations
+            .find({ status: "Verified" }) 
             .sort({ createdAt: -1 })
             .toArray();
           res.send(donations);
@@ -1233,8 +1227,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       }
     );
 
-    // PATCH /admin/feature-donations/:id
-    // Toggle featured status
     app.patch(
       "/admin/feature-donations/:id",
       verifyToken,
@@ -1254,7 +1246,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
 
           const result = await donationsCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: { isFeatured: true } } // you can toggle true/false if needed
+            { $set: { isFeatured: true } } 
           );
           res.send({
             success: true,
