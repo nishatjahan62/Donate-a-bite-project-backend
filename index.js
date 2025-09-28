@@ -163,6 +163,24 @@ async function run() {
       res.send(users);
     });
 
+    // Delete user
+    app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        // Delete user from MongoDB
+        await usersCollection.deleteOne({ _id: new ObjectId(id) });
+
+        res.json({ success: true, message: "User deleted successfully" });
+      } catch (err) {
+        console.error("Error deleting user:", err);
+        res.status(500).json({ message: "Failed to delete user" });
+      }
+    });
+
     // Make a user admin
     app.patch(
       "/users/:id/make-admin",
@@ -218,6 +236,7 @@ async function run() {
     );
 
     // Make Charity
+    // Make Charity
     app.patch(
       "/users/:id/make-charity",
       verifyToken,
@@ -225,13 +244,30 @@ async function run() {
       async (req, res) => {
         try {
           const { id } = req.params;
+
+          // Update user role
           const result = await usersCollection.updateOne(
             { _id: new ObjectId(id) },
             { $set: { role: "charity" } }
           );
           if (result.matchedCount === 0)
             return res.status(404).json({ error: "User not found" });
-          res.json({ success: true, message: "User role set to charity" });
+
+          // Update pending charity request to "Approved"
+          const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+          await requestsCollection.updateOne(
+            {
+              email: user.email,
+              purpose: "Charity Role Request",
+              status: "Pending",
+            },
+            { $set: { status: "Approved" } }
+          );
+
+          res.json({
+            success: true,
+            message: "User role set to charity and request approved if exists",
+          });
         } catch (err) {
           console.error("Error making charity:", err);
           res.status(500).json({ error: "Failed to set charity role" });
@@ -247,15 +283,25 @@ async function run() {
       async (req, res) => {
         try {
           const { id } = req.params;
+
+          // Update user role
           const result = await usersCollection.updateOne(
             { _id: new ObjectId(id) },
             { $set: { role: "user" } }
           );
           if (result.matchedCount === 0)
             return res.status(404).json({ error: "User not found" });
+
+          // Update request status if exists
+          const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+          await requestsCollection.updateOne(
+            { email: user.email, purpose: "Charity Role Request" },
+            { $set: { status: "Rejected" } }
+          );
+
           res.json({
             success: true,
-            message: "Charity role removed, set back to user",
+            message: "Charity role removed and request marked as rejected",
           });
         } catch (err) {
           console.error("Error removing charity:", err);
@@ -790,11 +836,12 @@ async function run() {
       }
 
       const donations = await donationsCollection
-        .find({ restaurantEmail: email })
+        .find({ "restaurant.email": email })
         .toArray();
 
       res.send(donations);
     });
+
     // PATCH /donations/:id
     app.patch("/donations/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
@@ -820,35 +867,41 @@ async function run() {
 
     // Get all donation requests for restaurant dashboard
     app.get("/requests/restaurant/all", verifyToken, async (req, res) => {
-      try {
-        const requests = await requestsCollection
-          .find({ purpose: { $ne: "Charity Role Request" } })
-          .toArray();
+  try {
+    const requests = await requestsCollection
+      .find({ purpose: { $ne: "Charity Role Request" } })
+      .toArray();
 
-        const detailedRequests = await Promise.all(
-          requests.map(async (reqDoc) => {
-            const donation = await donationsCollection.findOne({
-              _id: new ObjectId(reqDoc.donationId),
-            });
-            return {
-              ...reqDoc,
-              donationTitle: reqDoc.donationTitle,
-              foodType: donation?.foodType || "N/A",
-              charityName: reqDoc.charityName,
-              charityEmail: reqDoc.charityEmail,
-              description: reqDoc.description,
-              pickupTime: reqDoc.pickupTime,
-              status: reqDoc.status,
-            };
-          })
-        );
+    const detailedRequests = await Promise.all(
+      requests.map(async (reqDoc) => {
+        const donation = await donationsCollection.findOne({
+          _id: new ObjectId(reqDoc.donationId),
+        });
 
-        res.send(detailedRequests);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ message: "Failed to fetch donation requests" });
-      }
-    });
+        // <-- Add it here
+        const user = await usersCollection.findOne({ email: reqDoc.charityEmail });
+
+        return {
+          ...reqDoc,
+          donationTitle: reqDoc.donationTitle,
+          foodType: donation?.foodType || "N/A",
+          charityName: reqDoc.charityName,
+          charityEmail: reqDoc.charityEmail,
+          charityImage: user?.photoURL || null, // <-- This line
+          description: reqDoc.description,
+          pickupTime: reqDoc.pickupTime,
+          status: reqDoc.status,
+        };
+      })
+    );
+
+    res.send(detailedRequests);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to fetch donation requests" });
+  }
+});
+
 
     // Accept a request
     app.patch("/requests/accept/:id", verifyToken, async (req, res) => {
@@ -897,21 +950,21 @@ async function run() {
 
     // Admin Routes=>
 
-// Only restaurant-added donations 
-app.get("/donations", verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const donations = await donationsCollection
-      .find({ restaurantName: { $exists: true } }) // 👈 only real restaurant-added
-      .sort({ createdAt: -1 })
-      .toArray();
+    // manage donations
+    //  restaurant-added donations
+    app.get("/donations", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const donations = await donationsCollection
+          .find({ "restaurant.email": { $exists: true } })
+          .sort({ createdAt: -1 })
+          .toArray();
 
-    res.send(donations);
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ message: "Failed to fetch donations" });
-  }
-});
-
+        res.send(donations);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch donations" });
+      }
+    });
 
     // Verify a donation
     app.patch(
@@ -949,6 +1002,233 @@ app.get("/donations", verifyToken, verifyAdmin, async (req, res) => {
         } catch (err) {
           console.error(err);
           res.status(500).send({ message: "Failed to reject donation" });
+        }
+      }
+    );
+
+    // manage Role Requests
+    // ✅ Admin: Get all charity role requests
+    app.get("/charity-requests", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const requests = await requestsCollection
+          .find({ purpose: "Charity Role Request" })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        // enrich with user details
+        const detailed = await Promise.all(
+          requests.map(async (reqDoc) => {
+            const user = await usersCollection.findOne({ email: reqDoc.email });
+            return {
+              ...reqDoc,
+              userName: user?.name || "Unknown",
+              userEmail: user?.email,
+            };
+          })
+        );
+
+        res.send(detailed);
+      } catch (err) {
+        console.error(err);
+        res
+          .status(500)
+          .send({ message: "Failed to fetch charity role requests" });
+      }
+    });
+
+    // ✅ Admin: Approve charity role request
+    app.patch(
+      "/charity-requests/:id/approve",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+
+        try {
+          // find request
+          const request = await requestsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!request)
+            return res.status(404).send({ message: "Request not found" });
+
+          // update user role
+          await usersCollection.updateOne(
+            { email: request.email },
+            { $set: { role: "charity" } }
+          );
+
+          // update request status
+          await requestsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: "Approved" } }
+          );
+
+          res.send({ message: "Charity role approved successfully" });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Failed to approve request" });
+        }
+      }
+    );
+
+    // ✅ Admin: Reject charity role request
+    app.patch(
+      "/charity-requests/:id/reject",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+
+        try {
+          const result = await requestsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: "Rejected" } }
+          );
+
+          res.send({ message: "Charity role request rejected" });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Failed to reject request" });
+        }
+      }
+    );
+
+    // Manage Requests::
+
+    // =====================
+    // Admin: Get all donation requests
+    // =====================
+    app.get("/admin/requests", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        // exclude Charity Role Requests
+        const requests = await requestsCollection
+          .find({ purpose: { $ne: "Charity Role Request" } })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        // enrich with donation and charity details
+        const detailedRequests = await Promise.all(
+          requests.map(async (reqDoc) => {
+            const donation = await donationsCollection.findOne({
+              _id: new ObjectId(reqDoc.donationId),
+            });
+            return {
+              ...reqDoc,
+              donationTitle: donation?.title || "Unknown",
+              charityName: reqDoc.charityName || "Unknown",
+              charityEmail: reqDoc.charityEmail || "Unknown",
+              description: reqDoc.description || "",
+            };
+          })
+        );
+
+        res.send(detailedRequests);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch donation requests" });
+      }
+    });
+
+    // =====================
+    // Admin: Delete a donation request
+    // =====================
+    app.delete(
+      "/admin/requests/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          const request = await requestsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!request)
+            return res.status(404).send({ message: "Request not found" });
+
+          await requestsCollection.deleteOne({ _id: new ObjectId(id) });
+          res.send({ success: true, message: "Request deleted successfully" });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Failed to delete request" });
+        }
+      }
+    );
+
+    // Featured Donations
+    // GET all verified donations for admin "Feature Donations" page
+    app.get(
+      "/admin/feature-donations",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const donations = await donationsCollection
+            .find({ status: "Verified" }) // only verified donations
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.send(donations);
+        } catch (err) {
+          console.error(err);
+          res
+            .status(500)
+            .send({ message: "Failed to fetch verified donations" });
+        }
+      }
+    );
+
+    // All donations
+
+    app.get(
+      "/all-donations",
+      verifyToken,
+      async (req, res) => {
+        try {
+          const donations = await donationsCollection
+            .find({ status: "Verified" }) // only verified donations
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.send(donations);
+        } catch (err) {
+          console.error(err);
+          res
+            .status(500)
+            .send({ message: "Failed to fetch verified donations" });
+        }
+      }
+    );
+
+    // PATCH /admin/feature-donations/:id
+    // Toggle featured status
+    app.patch(
+      "/admin/feature-donations/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        try {
+          const donation = await donationsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!donation)
+            return res.status(404).send({ message: "Donation not found" });
+          if (donation.status !== "Verified")
+            return res
+              .status(400)
+              .send({ message: "Only verified donations can be featured" });
+
+          const result = await donationsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { isFeatured: true } } // you can toggle true/false if needed
+          );
+          res.send({
+            success: true,
+            message: "Donation featured successfully",
+          });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Failed to feature donation" });
         }
       }
     );
