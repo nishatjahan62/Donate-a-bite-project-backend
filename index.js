@@ -450,6 +450,40 @@ async function run() {
       const result = await requestsCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
+
+    // Get a single request by ID
+app.get("/requests/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const request = await requestsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!request) return res.status(404).json({ message: "Request not found" });
+
+    let donationData = {};
+    if (request.donationId) {
+      const donation = await donationsCollection.findOne({
+        _id: new ObjectId(request.donationId),
+      });
+      if (donation) {
+        donationData = {
+          donationTitle: donation.title,
+          restaurantName: donation.restaurant?.name,
+          foodType: donation.foodType,
+          quantity: donation.quantity,
+          pickupTime: donation.pickupTime,
+        };
+      }
+    }
+
+    res.send({ ...request, ...donationData });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
     app.get(
       "/requests/by-donation/:donationId",
       verifyToken,
