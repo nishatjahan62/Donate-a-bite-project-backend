@@ -166,7 +166,7 @@ async function run() {
       res.send(users);
     });
 
-     app.get("/users/:email", verifyToken, async (req, res) => {
+    app.get("/users/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
       if (req.decoded.email !== email) {
@@ -236,7 +236,7 @@ async function run() {
         }
       }
     );
-    // Remove admin 
+    // Remove admin
     app.patch(
       "/users/:id/remove-admin",
       verifyToken,
@@ -305,7 +305,7 @@ async function run() {
       }
     );
 
-    // Remove Charity 
+    // Remove Charity
     app.patch(
       "/users/:id/remove-charity",
       verifyToken,
@@ -362,7 +362,7 @@ async function run() {
       }
     );
 
-    // Remove Restaurant 
+    // Remove Restaurant
     app.patch(
       "/users/:id/remove-restaurant",
       verifyToken,
@@ -387,7 +387,7 @@ async function run() {
       }
     );
 
-// Featured section apis::
+    // Featured section apis::
     app.get("/featured-donations", async (req, res) => {
       const cursor = donationsCollection.find();
       const result = await cursor.limit(6).toArray();
@@ -399,6 +399,47 @@ async function run() {
       const result = await donationsCollection.findOne(query);
       res.send(result);
     });
+
+    //  latest charity requests 
+app.get("/charity-requests/latest", async (req, res) => {
+  try {
+    const requests = await requestsCollection
+      .find({ purpose: { $ne: "Charity Role Request" } })
+      .sort({ createdAt: -1 }) 
+      .limit(3)
+      .toArray();
+
+    const detailedRequests = await Promise.all(
+      requests.map(async (reqDoc) => {
+        const donation = await donationsCollection.findOne({
+          _id: new ObjectId(reqDoc.donationId),
+        });
+
+        const user = await usersCollection.findOne({
+          email: reqDoc.charityEmail,
+        });
+
+        return {
+          ...reqDoc,
+          donationTitle: reqDoc.donationTitle,
+          foodType: donation?.foodType || "N/A",
+          charityName: reqDoc.charityName,
+          charityEmail: reqDoc.charityEmail,
+          charityImage: user?.photoURL || null,
+          description: reqDoc.description,
+          pickupTime: reqDoc.pickupTime,
+          status: reqDoc.status,
+        };
+      })
+    );
+
+    res.send(detailedRequests);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to fetch latest charity requests" });
+  }
+});
+
 
     // Save to favorites
     app.post("/favorites", verifyToken, async (req, res) => {
@@ -445,7 +486,7 @@ async function run() {
       res.send(result);
     });
 
-    // Update request status 
+    // Update request status
     app.patch("/requests/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const { status } = req.body;
@@ -458,44 +499,45 @@ async function run() {
     });
 
     // Get a single request by ID
-app.get("/requests/:id", verifyToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const request = await requestsCollection.findOne({ _id: new ObjectId(id) });
+    app.get("/requests/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const request = await requestsCollection.findOne({
+          _id: new ObjectId(id),
+        });
 
-    if (!request) return res.status(404).json({ message: "Request not found" });
+        if (!request)
+          return res.status(404).json({ message: "Request not found" });
 
-    let donationData = {};
-    if (request.donationId) {
-      const donation = await donationsCollection.findOne({
-        _id: new ObjectId(request.donationId),
-      });
-      if (donation) {
-        donationData = {
-          donationTitle: donation.title,
-          restaurantName: donation.restaurant?.name,
-          foodType: donation.foodType,
-          quantity: donation.quantity,
-          pickupTime: donation.pickupTime,
-        };
+        let donationData = {};
+        if (request.donationId) {
+          const donation = await donationsCollection.findOne({
+            _id: new ObjectId(request.donationId),
+          });
+          if (donation) {
+            donationData = {
+              donationTitle: donation.title,
+              restaurantName: donation.restaurant?.name,
+              foodType: donation.foodType,
+              quantity: donation.quantity,
+              pickupTime: donation.pickupTime,
+            };
+          }
+        }
+
+        res.send({ ...request, ...donationData });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
       }
-    }
-
-    res.send({ ...request, ...donationData });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-
+    });
 
     app.get(
       "/requests/by-donation/:donationId",
       verifyToken,
       async (req, res) => {
         const donationId = req.params.donationId;
-        const email = req.query.email; 
+        const email = req.query.email;
         const result = await requestsCollection
           .find({ donationId, charityEmail: email })
           .toArray();
@@ -621,7 +663,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       res.send(detailedRequests);
     });
 
-    // Get all pickups for a charity 
+    // Get all pickups for a charity
     app.get("/charity/my-pickups/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
@@ -719,7 +761,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       const result = await reviewsCollection.insertOne(review);
       res.send(result);
     });
-
 
     // Payment related apis::
 
@@ -843,7 +884,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
             .json({ message: "All required fields must be filled" });
         }
 
-      
         const newDonation = {
           title,
           foodType,
@@ -855,7 +895,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
             location: location,
           },
           image,
-          status: "Pending", 
+          status: "Pending",
           createdAt: new Date(),
         };
 
@@ -906,40 +946,41 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
 
     // Get all donation requests for restaurant dashboard
     app.get("/requests/restaurant/all", verifyToken, async (req, res) => {
-  try {
-    const requests = await requestsCollection
-      .find({ purpose: { $ne: "Charity Role Request" } })
-      .toArray();
+      try {
+        const requests = await requestsCollection
+          .find({ purpose: { $ne: "Charity Role Request" } })
+          .toArray();
 
-    const detailedRequests = await Promise.all(
-      requests.map(async (reqDoc) => {
-        const donation = await donationsCollection.findOne({
-          _id: new ObjectId(reqDoc.donationId),
-        });
+        const detailedRequests = await Promise.all(
+          requests.map(async (reqDoc) => {
+            const donation = await donationsCollection.findOne({
+              _id: new ObjectId(reqDoc.donationId),
+            });
 
-        const user = await usersCollection.findOne({ email: reqDoc.charityEmail });
+            const user = await usersCollection.findOne({
+              email: reqDoc.charityEmail,
+            });
 
-        return {
-          ...reqDoc,
-          donationTitle: reqDoc.donationTitle,
-          foodType: donation?.foodType || "N/A",
-          charityName: reqDoc.charityName,
-          charityEmail: reqDoc.charityEmail,
-          charityImage: user?.photoURL || null, 
-          description: reqDoc.description,
-          pickupTime: reqDoc.pickupTime,
-          status: reqDoc.status,
-        };
-      })
-    );
+            return {
+              ...reqDoc,
+              donationTitle: reqDoc.donationTitle,
+              foodType: donation?.foodType || "N/A",
+              charityName: reqDoc.charityName,
+              charityEmail: reqDoc.charityEmail,
+              charityImage: user?.photoURL || null,
+              description: reqDoc.description,
+              pickupTime: reqDoc.pickupTime,
+              status: reqDoc.status,
+            };
+          })
+        );
 
-    res.send(detailedRequests);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ message: "Failed to fetch donation requests" });
-  }
-});
-
+        res.send(detailedRequests);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch donation requests" });
+      }
+    });
 
     // Accept a request
     app.patch("/requests/accept/:id", verifyToken, async (req, res) => {
@@ -1081,20 +1122,17 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
         const { id } = req.params;
 
         try {
-       
           const request = await requestsCollection.findOne({
             _id: new ObjectId(id),
           });
           if (!request)
             return res.status(404).send({ message: "Request not found" });
 
-       
           await usersCollection.updateOne(
             { email: request.email },
             { $set: { role: "charity" } }
           );
 
-      
           await requestsCollection.updateOne(
             { _id: new ObjectId(id) },
             { $set: { status: "Approved" } }
@@ -1133,7 +1171,6 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     // Manage Requests::
     app.get("/admin/requests", verifyToken, verifyAdmin, async (req, res) => {
       try {
-    
         const requests = await requestsCollection
           .find({ purpose: { $ne: "Charity Role Request" } })
           .sort({ createdAt: -1 })
@@ -1161,7 +1198,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       }
     });
 
-  // Delete a donation request
+    // Delete a donation request
     app.delete(
       "/admin/requests/:id",
       verifyToken,
@@ -1186,7 +1223,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     );
 
     // Featured Donations
-   
+
     app.get(
       "/admin/feature-donations",
       verifyToken,
@@ -1194,7 +1231,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
       async (req, res) => {
         try {
           const donations = await donationsCollection
-            .find({ status: "Verified" }) 
+            .find({ status: "Verified" })
             .sort({ createdAt: -1 })
             .toArray();
           res.send(donations);
@@ -1208,24 +1245,18 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
     );
 
     // All donations
-    app.get(
-      "/all-donations",
-      verifyToken,
-      async (req, res) => {
-        try {
-          const donations = await donationsCollection
-            .find({ status: "Verified" }) 
-            .sort({ createdAt: -1 })
-            .toArray();
-          res.send(donations);
-        } catch (err) {
-          console.error(err);
-          res
-            .status(500)
-            .send({ message: "Failed to fetch verified donations" });
-        }
+    app.get("/all-donations", verifyToken, async (req, res) => {
+      try {
+        const donations = await donationsCollection
+          .find({ status: "Verified" })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(donations);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch verified donations" });
       }
-    );
+    });
 
     app.patch(
       "/admin/feature-donations/:id",
@@ -1246,7 +1277,7 @@ app.get("/requests/:id", verifyToken, async (req, res) => {
 
           const result = await donationsCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: { isFeatured: true } } 
+            { $set: { isFeatured: true } }
           );
           res.send({
             success: true,
