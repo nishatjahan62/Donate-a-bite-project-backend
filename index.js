@@ -209,6 +209,48 @@ async function run() {
       }
     });
 
+    // Get all donations (any status)
+    app.get("/donations/all", async (req, res) => {
+      try {
+        const donations = await donationsCollection
+          .find({})
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(donations);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch all donations" });
+      }
+    });
+
+    // Get pending donations
+    app.get("/donations/pending", verifyToken, async (req, res) => {
+      try {
+        const pendingDonations = await donationsCollection
+          .find({ status: "Pending" })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(pendingDonations);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch pending donations" });
+      }
+    });
+    //  donations
+    app.get("/donations/verified", verifyToken, async (req, res) => {
+      try {
+        const donations = await donationsCollection
+          .find({ status: "Verified" })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(donations);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch verified donations" });
+      }
+    });
+
     // Role changing apis::
 
     // Make a user admin
@@ -400,46 +442,47 @@ async function run() {
       res.send(result);
     });
 
-    //  latest charity requests 
-app.get("/charity-requests/latest", async (req, res) => {
-  try {
-    const requests = await requestsCollection
-      .find({ purpose: { $ne: "Charity Role Request" } })
-      .sort({ createdAt: -1 }) 
-      .limit(3)
-      .toArray();
+    //  latest charity requests
+    app.get("/charity-requests/latest", async (req, res) => {
+      try {
+        const requests = await requestsCollection
+          .find({ purpose: { $ne: "Charity Role Request" } })
+          .sort({ createdAt: -1 })
+          .limit(3)
+          .toArray();
 
-    const detailedRequests = await Promise.all(
-      requests.map(async (reqDoc) => {
-        const donation = await donationsCollection.findOne({
-          _id: new ObjectId(reqDoc.donationId),
-        });
+        const detailedRequests = await Promise.all(
+          requests.map(async (reqDoc) => {
+            const donation = await donationsCollection.findOne({
+              _id: new ObjectId(reqDoc.donationId),
+            });
 
-        const user = await usersCollection.findOne({
-          email: reqDoc.charityEmail,
-        });
+            const user = await usersCollection.findOne({
+              email: reqDoc.charityEmail,
+            });
 
-        return {
-          ...reqDoc,
-          donationTitle: reqDoc.donationTitle,
-          foodType: donation?.foodType || "N/A",
-          charityName: reqDoc.charityName,
-          charityEmail: reqDoc.charityEmail,
-          charityImage: user?.photoURL || null,
-          description: reqDoc.description,
-          pickupTime: reqDoc.pickupTime,
-          status: reqDoc.status,
-        };
-      })
-    );
+            return {
+              ...reqDoc,
+              donationTitle: reqDoc.donationTitle,
+              foodType: donation?.foodType || "N/A",
+              charityName: reqDoc.charityName,
+              charityEmail: reqDoc.charityEmail,
+              charityImage: user?.photoURL || null,
+              description: reqDoc.description,
+              pickupTime: reqDoc.pickupTime,
+              status: reqDoc.status,
+            };
+          })
+        );
 
-    res.send(detailedRequests);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ message: "Failed to fetch latest charity requests" });
-  }
-});
-
+        res.send(detailedRequests);
+      } catch (err) {
+        console.error(err);
+        res
+          .status(500)
+          .send({ message: "Failed to fetch latest charity requests" });
+      }
+    });
 
     // Save to favorites
     app.post("/favorites", verifyToken, async (req, res) => {
@@ -620,6 +663,19 @@ app.get("/charity-requests/latest", async (req, res) => {
     });
 
     // charity apis::
+
+    // Get all charities
+    app.get("/charities", async (req, res) => {
+      try {
+        const charities = await usersCollection
+          .find({ role: "charity" })
+          .toArray();
+        res.send(charities);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch charities" });
+      }
+    });
 
     app.get("/charity-request/check", verifyToken, async (req, res) => {
       const email = req.query.email;
@@ -854,6 +910,19 @@ app.get("/charity-requests/latest", async (req, res) => {
     });
 
     // Restaurant Routes::
+
+    // Get all restaurants
+    app.get("/restaurants", async (req, res) => {
+      try {
+        const restaurants = await usersCollection
+          .find({ role: "restaurant" })
+          .toArray();
+        res.send(restaurants);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch restaurants" });
+      }
+    });
 
     // Add donation (restaurant only)
     app.post("/donations", verifyToken, async (req, res) => {
@@ -1243,20 +1312,6 @@ app.get("/charity-requests/latest", async (req, res) => {
         }
       }
     );
-
-    // All donations
-    app.get("/all-donations", verifyToken, async (req, res) => {
-      try {
-        const donations = await donationsCollection
-          .find({ status: "Verified" })
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.send(donations);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ message: "Failed to fetch verified donations" });
-      }
-    });
 
     app.patch(
       "/admin/feature-donations/:id",
