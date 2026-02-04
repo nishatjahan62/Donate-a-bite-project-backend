@@ -36,11 +36,15 @@ async function run() {
     const favoritesCollection = client
       .db("Assignment-12")
       .collection("Favorites");
-    const usersCollection = client.db("Assignment-12").collection("Users");
+    const usersCollection = client
+    .db("Assignment-12")
+    .collection("Users");
     const requestsCollection = client
       .db("Assignment-12")
       .collection("Requests");
-    const reviewsCollection = client.db("Assignment-12").collection("Reviews");
+    const reviewsCollection = client
+    .db("Assignment-12")
+    .collection("Reviews");
     const transactionsCollection = client
       .db("Assignment-12")
       .collection("Transactions");
@@ -307,7 +311,7 @@ async function run() {
       }
     );
 
-    // Make Charity
+    
     // Make Charity
     app.patch(
       "/users/:id/make-charity",
@@ -718,6 +722,9 @@ async function run() {
 
       res.send(detailedRequests);
     });
+   
+
+
 
     // Get all pickups for a charity
     app.get("/charity/my-pickups/:email", verifyToken, async (req, res) => {
@@ -1345,6 +1352,55 @@ async function run() {
       }
     );
 
+    // profile edit 
+app.put("/users/:email", verifyToken, async (req, res) => {
+  const email = req.params.email;
+
+  if (req.decoded.email !== email) {
+    return res.status(403).send({ message: "Forbidden" });
+  }
+
+  // Only allow editable fields
+  const {
+    name,
+    photoURL,
+    address,
+    contact,
+    mission,
+    restaurantName,
+    charityName
+  } = req.body;
+
+  const updateDoc = {
+    $set: {
+      ...(name && { name }),
+      ...(photoURL && { photoURL }),
+      ...(address && { address }),
+      ...(contact && { contact }),
+      ...(mission && { mission }),
+      ...(restaurantName && { restaurantName }),
+      ...(charityName && { charityName }),
+      updatedAt: new Date()
+    }
+  };
+
+  const result = await usersCollection.updateOne(
+    { email },
+    updateDoc
+  );
+
+  if (result.matchedCount === 0) {
+    return res.status(404).send({ message: "User not found" });
+  }
+
+  res.send({
+    success: true,
+    message: "Profile updated successfully"
+  });
+});
+
+
+
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
@@ -1355,9 +1411,9 @@ async function run() {
 }
 run().catch(console.dir);
 app.get("/", (req, res) => {
-  res.send("Assignment-12 is running!");
+  res.send("donate-a-bite is running!");
 });
 
 app.listen(port, () => {
-  console.log(`Assignment on  port ${port}`);
+  console.log(`Donate-a-bite on  port ${port}`);
 });
